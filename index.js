@@ -467,13 +467,13 @@ async function run() {
           email: req?.decoded?.email,
         });
         const user_id = user?._id;
-        // console.log(user, "hil");
+        console.log(user, "hil");
         // Check if user has an active subscription
-        // if (!user?.subscription?.active) {
-        //   return res
-        //     .status(403)
-        //     .send({ message: "Active subscription required" });
-        // }
+        if (!user?.subscription?.active) {
+          return res
+            .status(400)
+            .send({ message: "Active subscription required" });
+        }
 
         // Check if user already requested this meal
         const existingRequest = await requestCollection.findOne({
