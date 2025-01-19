@@ -128,6 +128,7 @@ async function run() {
       verifyAdmin,
       async (req, res) => {
         const id = req.params.id;
+        console.log(id, "admin");
         const filter = { _id: new ObjectId(id) };
         const updatedDoc = {
           $set: {
@@ -289,13 +290,7 @@ async function run() {
       // Search filter
       if (search) {
         const searchRegex = new RegExp(search, "i");
-        query.$or = [
-          { title: searchRegex },
-          { description: searchRegex },
-          { category: searchRegex },
-          { ingredients: searchRegex },
-          { distributor_name: searchRegex },
-        ];
+        query.$or = [{ title: searchRegex }, { category: searchRegex }];
       }
 
       // Category filter
