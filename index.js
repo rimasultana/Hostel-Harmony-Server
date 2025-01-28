@@ -275,6 +275,27 @@ async function run() {
       }
     });
 
+    // Get user profile
+    app.get("/users/:email", verifyToken, async (req, res) => {
+      try {
+        const email = req.params.email;
+
+        // Verify user is requesting their own profile
+        if (email !== req.decoded.email) {
+          return res.status(403).send({ message: "Forbidden access" });
+        }
+
+        const user = await userCollection.findOne({ email });
+        if (!user) {
+          return res.status(404).send({ message: "User not found" });
+        }
+
+        res.send(user);
+      } catch (error) {
+        res.status(500).send({ message: "Error fetching user profile" });
+      }
+    });
+
     // meal
     app.get("/meals", async (req, res) => {
       const {
@@ -1002,6 +1023,38 @@ async function run() {
         res.send(result);
       } catch (error) {
         res.status(500).send({ message: "Error deleting review" });
+      }
+    });
+
+    // Get admin stats
+    app.get("/admin/stats", verifyToken, verifyAdmin, async (req, res) => {
+      try {
+        const [users, meals, reviews, payments] = await Promise.all([
+          userCollection.countDocuments(),
+          mealCollection.countDocuments(),
+          reviewCollection.countDocuments(),
+          paymentCollection.find().toArray(),
+        ]);
+
+        // Get meals added by this admin
+        const adminMeals = await mealCollection.countDocuments({
+          distributor_email: req.decoded.email,
+        });
+
+        const totalRevenue = payments.reduce(
+          (sum, payment) => sum + payment.amount,
+          0
+        );
+
+        res.send({
+          totalUsers: users,
+          totalMeals: meals,
+          totalReviews: reviews,
+          totalRevenue: parseFloat(totalRevenue.toFixed(2)),
+          mealsAdded: adminMeals,
+        });
+      } catch (error) {
+        res.status(500).send({ message: "Error fetching admin stats" });
       }
     });
   } finally {
