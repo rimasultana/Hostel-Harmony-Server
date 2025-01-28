@@ -486,11 +486,11 @@ async function run() {
         });
         const user_id = user?._id;
         // Check if user has an active subscription
-        // if (!user?.subscription?.active) {
-        //   return res
-        //     .status(400)
-        //     .send({ message: "Active subscription required" });
-        // }
+        if (user?.subscription === "Bronze") {
+          return res
+            .status(400)
+            .send({ message: "Active subscription required" });
+        }
 
         // Check if user already requested this meal
         const existingRequest = await requestCollection.findOne({
@@ -735,8 +735,12 @@ async function run() {
       const payment = req.body;
       const paymentResult = await paymentCollection.insertOne(payment);
 
-      //  carefully delete each item from the cart
-      console.log("payment info", payment);
+      if (paymentResult.insertedId) {
+        await userCollection.updateOne(
+          { email: payment.email },
+          { $set: { subscription: payment.package } }
+        );
+      }
       res.send({ paymentResult });
     });
 
@@ -744,7 +748,7 @@ async function run() {
     app.get("/payments/:email", verifyToken, async (req, res) => {
       try {
         const { email } = req.params;
-        
+
         // Verify user is requesting their own payments
         if (req.decoded.email !== email) {
           return res.status(403).send({ message: "Forbidden access" });
