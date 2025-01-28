@@ -739,6 +739,28 @@ async function run() {
       console.log("payment info", payment);
       res.send({ paymentResult });
     });
+
+    // Get payment history for a user
+    app.get("/payments/:email", verifyToken, async (req, res) => {
+      try {
+        const { email } = req.params;
+        
+        // Verify user is requesting their own payments
+        if (req.decoded.email !== email) {
+          return res.status(403).send({ message: "Forbidden access" });
+        }
+
+        const payments = await paymentCollection
+          .find({ email })
+          .sort({ date: -1 })
+          .toArray();
+
+        res.send(payments);
+      } catch (error) {
+        console.error("Error fetching payment history:", error);
+        res.status(500).send({ message: error.message });
+      }
+    });
   } finally {
     // Ensures that the client will close when you finish/error
     // await client.close();
