@@ -425,7 +425,7 @@ async function run() {
           email: req?.decoded?.email,
         });
         const user_id = user?._id;
-        const { text, rating } = req.body;
+        const { text, rating, ...bodyData } = req.body;
 
         if (!text || !rating) {
           return res
@@ -441,6 +441,7 @@ async function run() {
           text,
           rating: Number(rating),
           createdAt: new Date(),
+          ...bodyData,
         };
 
         await reviewCollection.insertOne(review);
@@ -874,6 +875,124 @@ async function run() {
         }
       }
     );
+
+    // Review management routes
+    app.get("/reviews/:email", verifyToken, async (req, res) => {
+      try {
+        const email = req.params.email;
+        // Verify user is requesting their own reviews
+        if (email !== req.decoded.email) {
+          return res.status(403).send({ message: "Forbidden access" });
+        }
+
+        const reviews = await reviewCollection
+          .find({ user_email: email })
+          .toArray();
+        res.send(reviews);
+      } catch (error) {
+        res.status(500).send({ message: "Error fetching reviews" });
+      }
+    });
+
+    app.patch("/reviews/:id", verifyToken, async (req, res) => {
+      try {
+        const reviewId = new ObjectId(req.params.id);
+        const { rating, review } = req.body;
+        console.log(req.body, "hello");
+
+        // Verify user owns the review
+        const existingReview = await reviewCollection.findOne({
+          _id: reviewId,
+        });
+        if (!existingReview) {
+          return res.status(404).send({ message: "Review not found" });
+        }
+
+        if (existingReview.user_email !== req.decoded.email) {
+          return res.status(403).send({ message: "Forbidden access" });
+        }
+
+        // Update review
+        const result = await reviewCollection.updateOne(
+          { _id: reviewId },
+          {
+            $set: {
+              rating: parseFloat(rating),
+              text: review,
+            },
+          }
+        );
+
+        // Update meal rating
+        const mealId = existingReview.meal_id;
+        const allReviews = await reviewCollection
+          .find({ meal_id: mealId })
+          .toArray();
+
+        const avgRating =
+          allReviews.reduce((sum, rev) => sum + rev.rating, 0) /
+          allReviews.length;
+
+        await mealCollection.updateOne(
+          { _id: mealId },
+          {
+            $set: {
+              rating: parseFloat(avgRating.toFixed(1)),
+            },
+          }
+        );
+
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ message: "Error updating review" });
+      }
+    });
+
+    app.delete("/reviews/:id", verifyToken, async (req, res) => {
+      try {
+        const reviewId = new ObjectId(req.params.id);
+
+        // Verify user owns the review
+        const existingReview = await reviewCollection.findOne({
+          _id: reviewId,
+        });
+        if (!existingReview) {
+          return res.status(404).send({ message: "Review not found" });
+        }
+
+        if (existingReview.user_email !== req.decoded.email) {
+          return res.status(403).send({ message: "Forbidden access" });
+        }
+
+        // Delete review
+        const result = await reviewCollection.deleteOne({ _id: reviewId });
+
+        // Update meal rating
+        const mealId = existingReview.meal_id;
+        const remainingReviews = await reviewCollection
+          .find({ meal_id: mealId })
+          .toArray();
+
+        const avgRating = remainingReviews.length
+          ? remainingReviews.reduce((sum, rev) => sum + rev.rating, 0) /
+            remainingReviews.length
+          : 0;
+
+        await mealCollection.updateOne(
+          { _id: mealId },
+          {
+            $set: {
+              rating: parseFloat(avgRating.toFixed(1)),
+              reviews_count: remainingReviews.length,
+            },
+          }
+        );
+
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ message: "Error deleting review" });
+      }
+    });
   } finally {
     // Ensures that the client will close when you finish/error
     // await client.close();
