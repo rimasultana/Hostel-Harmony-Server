@@ -566,6 +566,10 @@ async function run() {
     });
     app.post("/meals", async (req, res) => {
       const meal = req.body;
+      if (meal._id) {
+        delete meal._id;
+      }
+      console.log(meal, "boady");
       const result = await mealCollection.insertOne(meal);
       res.send(result);
     });
