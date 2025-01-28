@@ -587,12 +587,7 @@ async function run() {
         if (!meal) {
           return res.status(404).send({ message: "Meal not found" });
         }
-        // Check if user is the distributor
-        if (meal.distributor_email !== req.decoded.email) {
-          return res
-            .status(403)
-            .send({ message: "Unauthorized to update this meal" });
-        }
+
         const updatedMeal = {
           ...req.body,
           _id: meal._id,
