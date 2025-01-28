@@ -6,6 +6,7 @@ const jwt = require("jsonwebtoken");
 const port = process.env.PORT || 5000;
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 require("dotenv").config();
+const stripe = require("stripe")(process.env.STRIPE_PK);
 
 // middleware
 app.use(cors());
@@ -39,6 +40,8 @@ async function run() {
     const reviewCollection = database.collection("reviews");
     const likeCollection = database.collection("likes");
     const requestCollection = database.collection("requests");
+    const paymentCollection = database.collection("payments");
+
     //!working
     //jwt api
     app.post("/jwt", async (req, res) => {
@@ -403,6 +406,12 @@ async function run() {
           { _id: new ObjectId(meal_id) },
           { $inc: { likes: 1 } }
         );
+
+        // Update request meal
+        await requestCollection.updateMany(
+          { meal_id: meal_id },
+          { $inc: { likes: 1 } }
+        );
         res.send({ message: "Meal liked successfully" });
       } catch (error) {
         console.log(error);
@@ -448,6 +457,18 @@ async function run() {
             $inc: { reviews_count: 1 },
           }
         );
+        const requestMeal = await requestCollection.findOne({
+          meal_id: meal_id,
+        });
+        if (requestMeal) {
+          await requestCollection.updateMany(
+            { meal_id: meal_id },
+            {
+              $set: { rating: avgRating },
+              $inc: { reviews_count: 1 },
+            }
+          );
+        }
 
         res.send(review);
       } catch (error) {
@@ -457,18 +478,19 @@ async function run() {
 
     app.post("/meal-requests", verifyToken, async (req, res) => {
       try {
-        const { meal_id } = req.body;
+        const body = req.body;
+        const meal_id = body._id;
+        delete body._id;
         const user = await userCollection.findOne({
           email: req?.decoded?.email,
         });
         const user_id = user?._id;
-        console.log(user, "hil");
         // Check if user has an active subscription
-        if (!user?.subscription?.active) {
-          return res
-            .status(400)
-            .send({ message: "Active subscription required" });
-        }
+        // if (!user?.subscription?.active) {
+        //   return res
+        //     .status(400)
+        //     .send({ message: "Active subscription required" });
+        // }
 
         // Check if user already requested this meal
         const existingRequest = await requestCollection.findOne({
@@ -481,20 +503,56 @@ async function run() {
         if (existingRequest) {
           return res.status(400).send({ message: "Meal already requested" });
         }
+        body.user_name = user.name;
+        body.user_email = user.email;
+        body.status = "pending";
+        body.createdAt = new Date();
+        body.meal_id = meal_id;
+        body.user_id = user_id;
 
-        const request = {
-          meal_id,
-          user_id,
-          user_name: user.name,
-          user_email: user.email,
-          status: "pending",
-          createdAt: new Date(),
-        };
-
-        await requestCollection.insertOne(request);
-        res.send(request);
+        const result = await requestCollection.insertOne(body);
+        res.send(result);
       } catch (error) {
         res.status(500).send({ error: error.message });
+      }
+    });
+    // Get requested meals for a user
+    app.get("/meal-requests", verifyToken, async (req, res) => {
+      try {
+        const email = req.decoded.email;
+        const result = await requestCollection
+          .find({ user_email: email })
+          .toArray();
+
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ message: error.message });
+      }
+    });
+
+    // Delete a meal request
+    app.delete("/meal-requests/:id", verifyToken, async (req, res) => {
+      try {
+        const id = req.params.id;
+        const email = req.decoded.email;
+
+        const query = {
+          _id: new ObjectId(id),
+          user_email: email,
+          status: "pending",
+        };
+
+        const result = await requestCollection.deleteOne(query);
+
+        if (result.deletedCount === 0) {
+          return res.status(404).send({
+            message: "Request not found or already processed",
+          });
+        }
+
+        res.send({ success: true, message: "Request cancelled successfully" });
+      } catch (error) {
+        res.status(500).send({ message: error.message });
       }
     });
 
@@ -567,6 +625,119 @@ async function run() {
         .find({ status: "approved" })
         .toArray();
       res.send(result);
+    });
+
+    // Get meals by category
+    app.get("/meals/category/:category", async (req, res) => {
+      try {
+        const { category } = req.params;
+        const limit = parseInt(req.query.limit) || 0;
+
+        let query = {};
+        if (category !== "all") {
+          query.category = category;
+        }
+
+        let meals = mealCollection.find(query);
+
+        // Apply limit if specified
+        if (limit > 0) {
+          meals = meals.limit(limit);
+        }
+
+        // Sort by rating and likes
+        meals = meals.sort({ rating: -1, likes: -1 });
+
+        const result = await meals.toArray();
+        res.send(result);
+      } catch (error) {
+        console.error("Error in meals by category:", error);
+        res.status(500).send({ message: error.message });
+      }
+    });
+
+    // Get all meal requests with search functionality
+    app.get("/serve-meals", verifyToken, async (req, res) => {
+      try {
+        const search = req.query.search || "";
+
+        let query = {};
+
+        // Search filter
+        if (search) {
+          const searchRegex = new RegExp(search, "i");
+          query.$or = [{ title: searchRegex }, { user_name: searchRegex }];
+        }
+
+        const result = await requestCollection.find(query).toArray();
+        res.send(result);
+      } catch (error) {
+        console.error("Error in serve-meals:", error);
+        res.status(500).send({ message: error.message });
+      }
+    });
+
+    // Update meal request status to delivered
+    app.patch("/serve-meals/:id", verifyToken, async (req, res) => {
+      try {
+        const id = req.params.id;
+        const { status } = req.body;
+
+        // Verify if the request exists and is pending
+        const request = await requestCollection.findOne({
+          _id: new ObjectId(id),
+          status: "pending",
+        });
+
+        if (!request) {
+          return res.status(404).send({
+            message: "Request not found or already processed",
+          });
+        }
+
+        const result = await requestCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: { status, updated_at: new Date() } }
+        );
+
+        if (result.modifiedCount === 0) {
+          return res.status(400).send({
+            message: "Failed to update request status",
+          });
+        }
+
+        res.send({
+          success: true,
+          message: "Meal served successfully",
+        });
+      } catch (error) {
+        console.error("Error in serve-meal update:", error);
+        res.status(500).send({ message: error.message });
+      }
+    });
+    // payment intent
+    app.post("/create-payment-intent", async (req, res) => {
+      const { price } = req.body;
+      const amount = parseInt(price * 100);
+      console.log(amount, "amount inside the intent");
+
+      const paymentIntent = await stripe.paymentIntents.create({
+        amount: amount,
+        currency: "usd",
+        payment_method_types: ["card"],
+      });
+
+      res.send({
+        clientSecret: paymentIntent.client_secret,
+      });
+    });
+    app.post("/payments", async (req, res) => {
+      const payment = req.body;
+      const paymentResult = await paymentCollection.insertOne(payment);
+
+      //  carefully delete each item from the cart
+      console.log("payment info", payment);
+      res.send({ paymentResult });
     });
   } finally {
     // Ensures that the client will close when you finish/error
