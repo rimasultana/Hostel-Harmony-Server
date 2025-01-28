@@ -894,6 +894,18 @@ async function run() {
       }
     });
 
+    app.get("/reviews", verifyToken, verifyAdmin, async (req, res) => {
+      try {
+        const reviews = await reviewCollection
+          .find()
+          .sort({ _id: -1 })
+          .toArray();
+        res.send(reviews);
+      } catch (error) {
+        res.status(500).send({ message: "Error fetching reviews" });
+      }
+    });
+
     app.patch("/reviews/:id", verifyToken, async (req, res) => {
       try {
         const reviewId = new ObjectId(req.params.id);
