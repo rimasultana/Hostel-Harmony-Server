@@ -41,6 +41,7 @@ async function run() {
     const likeCollection = database.collection("likes");
     const requestCollection = database.collection("requests");
     const paymentCollection = database.collection("payments");
+    const upcomingMealsCollection = database.collection("upcomingMeals");
 
     //!working
     //jwt api
@@ -754,17 +755,125 @@ async function run() {
           return res.status(403).send({ message: "Forbidden access" });
         }
 
-        const payments = await paymentCollection
+        const result = await paymentCollection
           .find({ email })
           .sort({ date: -1 })
           .toArray();
-
-        res.send(payments);
+        res.send(result);
       } catch (error) {
         console.error("Error fetching payment history:", error);
         res.status(500).send({ message: error.message });
       }
     });
+
+    // Upcoming Meals Routes
+    app.get("/upcoming-meals", async (req, res) => {
+      try {
+        const result = await upcomingMealsCollection
+          .find()
+          .sort({ likes: -1 })
+          .toArray();
+        res.send(result);
+      } catch (error) {
+        res.status(500).send("Error fetching upcoming meals");
+      }
+    });
+
+    app.post("/upcoming-meals", verifyToken, verifyAdmin, async (req, res) => {
+      try {
+        const meal = req.body;
+        meal.likes = 0;
+        meal.likedBy = [];
+        const result = await upcomingMealsCollection.insertOne(meal);
+        res.send(result);
+      } catch (error) {
+        res.status(500).send("Error adding upcoming meal");
+      }
+    });
+
+    app.post("/upcoming-meals/like/:id", verifyToken, async (req, res) => {
+      try {
+        const mealId = new ObjectId(req.params.id);
+        const userEmail = req.decoded.email;
+        // Check if user is premium
+        const user = await userCollection.findOne({ email: userEmail });
+        const isPremium = ["silver", "gold", "platinum"].includes(
+          user?.subscription
+        );
+
+        if (!isPremium) {
+          return res
+            .status(405)
+            .send({ message: "Only premium users can like meals" });
+        }
+
+        const meal = await upcomingMealsCollection.findOne({ _id: mealId });
+
+        if (!meal) {
+          return res.status(404).send({ message: "Meal not found" });
+        }
+
+        const likedBy = meal.likedBy || [];
+        const likes = meal.likes || 0;
+
+        if (likedBy.includes(userEmail)) {
+          return res
+            .status(400)
+            .send({ message: "You have already liked this meal" });
+        }
+
+        const result = await upcomingMealsCollection.updateOne(
+          { _id: mealId },
+          {
+            $inc: { likes: 1 },
+            $push: { likedBy: userEmail },
+          }
+        );
+
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ message: "Error liking meal" });
+      }
+    });
+
+    app.post("/upcoming-meals/unlike/:id", verifyToken, async (req, res) => {
+      try {
+        const mealId = new ObjectId(req.params.id);
+        const userEmail = req.decoded.email;
+
+        const meal = await upcomingMealsCollection.findOne({ _id: mealId });
+
+        if (!meal) {
+          return res.status(404).send({ message: "Meal not found" });
+        }
+        const result = await upcomingMealsCollection.updateOne(
+          { _id: mealId },
+          {
+            $inc: { likes: -1 },
+            $pull: { likedBy: userEmail },
+          }
+        );
+
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ message: "Error unliking meal" });
+      }
+    });
+
+    app.delete(
+      "/upcoming-meals/:id",
+      verifyToken,
+      verifyAdmin,
+      async (req, res) => {
+        try {
+          const id = new ObjectId(req.params.id);
+          const result = await upcomingMealsCollection.deleteOne({ _id: id });
+          res.send(result);
+        } catch (error) {
+          res.status(500).send("Error deleting upcoming meal");
+        }
+      }
+    );
   } finally {
     // Ensures that the client will close when you finish/error
     // await client.close();
