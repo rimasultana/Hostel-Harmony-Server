@@ -11,7 +11,6 @@ const stripe = require("stripe")(process.env.STRIPE_PK);
 // === Socket.IO: নতুন কোড শুরু (পরিবর্তন ১) ===
 const http = require("http");
 const { Server } = require("socket.io");
-// === Socket.IO: নতুন কোড শেষ ===
 
 // middleware
 app.use(cors());
@@ -47,7 +46,7 @@ async function run() {
     const upcomingMealsCollection = database.collection("upcomingMeals");
     const messagesCollection = database.collection("messages");
 
-    // === Socket.IO কানেকশন লজিক (সম্পূর্ণ এবং ফাইনাল) ===
+    // === Socket.IO) ===
     io.on('connection', (socket) => {
       console.log(`A user connected: ${socket.id}`);
 
@@ -86,6 +85,7 @@ async function run() {
         console.log(`User disconnected: ${socket.id}`);
       });
     });
+    // === Socket.IO: End ===
 
     //!working
     //jwt api
