@@ -8,14 +8,25 @@ const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 require("dotenv").config();
 const stripe = require("stripe")(process.env.STRIPE_PK);
 
+// === Socket.IO: নতুন কোড শুরু (পরিবর্তন ১) ===
+const http = require("http");
+const { Server } = require("socket.io");
+// === Socket.IO: নতুন কোড শেষ ===
+
 // middleware
 app.use(cors());
 app.use(morgan("dev"));
 app.use(express.json());
+const httpServer = http.createServer(app);
+const io = new Server(httpServer, {
+  cors: {
+    origin: ["http://localhost:5173", "https://hostel-harmony-c616d.web.app"],
+    methods: ["GET", "POST"]
+  }
+});
 
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.4hbah.mongodb.net/Hostel-Harmony`;
 
-// Create a MongoClient with a MongoClientOptions object to set the Stable API version
 const client = new MongoClient(uri, {
   serverApi: {
     version: ServerApiVersion.v1,
@@ -26,14 +37,6 @@ const client = new MongoClient(uri, {
 
 async function run() {
   try {
-    // Connect the client to the server	(optional starting in v4.7)
-    // await client.connect();
-    // Send a ping to confirm a successful connection
-    // await client.db("admin").command({ ping: 1 });
-    // console.log(
-    //   "Pinged your deployment. You successfully connected to MongoDB!"
-    // );
-    //todo Database Collection
     const database = client.db("Hostel-Harmony");
     const userCollection = database.collection("users");
     const mealCollection = database.collection("meals");
@@ -42,6 +45,47 @@ async function run() {
     const requestCollection = database.collection("requests");
     const paymentCollection = database.collection("payments");
     const upcomingMealsCollection = database.collection("upcomingMeals");
+    const messagesCollection = database.collection("messages");
+
+    // === Socket.IO কানেকশন লজিক (সম্পূর্ণ এবং ফাইনাল) ===
+    io.on('connection', (socket) => {
+      console.log(`A user connected: ${socket.id}`);
+
+      socket.on('joinRoom', async (userData) => {
+        socket.join(userData.email);
+        console.log(`${userData.email} joined room: ${userData.email}`);
+        
+        if (userData.role === 'admin') {
+          socket.join('admin-room');
+          console.log(`Admin ${userData.email} also joined the admin room.`);
+        } else {
+          const history = await messagesCollection.find({
+            $or: [
+              { senderEmail: userData.email },
+              { recipientEmail: userData.email }
+            ]
+          }).sort({ timestamp: 1 }).toArray();
+          
+          socket.emit('loadHistory', history);
+        }
+      });
+
+      socket.on('sendMessage', async (messageData) => {
+        await messagesCollection.insertOne(messageData);
+        const senderEmail = messageData.senderEmail;
+        const recipientEmail = messageData.recipientEmail;
+        if (messageData.role === 'admin') {
+          io.to(recipientEmail).emit('receiveMessage', messageData);
+        } else {
+          io.to(senderEmail).emit('receiveMessage', messageData);
+          io.to('admin-room').emit('receiveMessage', messageData);
+        }
+      });
+
+      socket.on('disconnect', () => {
+        console.log(`User disconnected: ${socket.id}`);
+      });
+    });
 
     //!working
     //jwt api
@@ -1064,6 +1108,10 @@ async function run() {
 }
 run().catch(console.dir);
 
-app.listen(port, () => {
+// app.listen(port, () => {
+//   console.log(`Server is running on port ${port}`);
+// });
+
+httpServer.listen(port, () => {
   console.log(`Server is running on port ${port}`);
 });
