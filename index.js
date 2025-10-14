@@ -8,22 +8,12 @@ const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 require("dotenv").config();
 const stripe = require("stripe")(process.env.STRIPE_PK);
 
-// === Socket.IO: নতুন কোড শুরু (পরিবর্তন ১) ===
-const http = require("http");
-const { Server } = require("socket.io");
-
-// middleware
+// Middleware
 app.use(cors());
 app.use(morgan("dev"));
 app.use(express.json());
-const httpServer = http.createServer(app);
-const io = new Server(httpServer, {
-  cors: {
-    origin: ["http://localhost:5173", "https://hostel-harmony-c616d.web.app"],
-    methods: ["GET", "POST"]
-  }
-});
 
+// MongoDB Connect URL
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.4hbah.mongodb.net/Hostel-Harmony`;
 
 const client = new MongoClient(uri, {
@@ -36,6 +26,7 @@ const client = new MongoClient(uri, {
 
 async function run() {
   try {
+    // DataBase And Collection
     const database = client.db("Hostel-Harmony");
     const userCollection = database.collection("users");
     const mealCollection = database.collection("meals");
@@ -43,89 +34,20 @@ async function run() {
     const likeCollection = database.collection("likes");
     const requestCollection = database.collection("requests");
     const paymentCollection = database.collection("payments");
-    const upcomingMealsCollection = database.collection("upcomingMeals");
-    const messagesCollection = database.collection("messages");
+    const upcomingMealsCollection = database.collection("upcomingMeals"); // সাধারণ রুট
 
-    // === Socket.IO) ===
-    io.on('connection', (socket) => {
-      console.log(`A user connected: ${socket.id}`);
+    app.get("/", (req, res) => {
+      res.send("Hostel Harmony Server is running");
+    }); // JWT create
 
-      socket.on('joinRoom', async (userData) => {
-        socket.join(userData.email);
-        console.log(`${userData.email} joined room: ${userData.email}`);
-        
-        if (userData.role === 'admin') {
-          socket.join('admin-room');
-          console.log(`Admin ${userData.email} also joined the admin room.`);
-        } else {
-          const history = await messagesCollection.find({
-            $or: [
-              { senderEmail: userData.email },
-              { recipientEmail: userData.email }
-            ]
-          }).sort({ timestamp: 1 }).toArray();
-          
-          socket.emit('loadHistory', history);
-        }
-      });
-
-      socket.on('sendMessage', async (messageData) => {
-        await messagesCollection.insertOne(messageData);
-        const senderEmail = messageData.senderEmail;
-        const recipientEmail = messageData.recipientEmail;
-        if (messageData.role === 'admin') {
-          io.to(recipientEmail).emit('receiveMessage', messageData);
-        } else {
-          io.to(senderEmail).emit('receiveMessage', messageData);
-          io.to('admin-room').emit('receiveMessage', messageData);
-        }
-      });
-
-      socket.on('disconnect', () => {
-        console.log(`User disconnected: ${socket.id}`);
-      });
-    });
-    // === Socket.IO: End ===
-
-    //!working
-    //jwt api
     app.post("/jwt", async (req, res) => {
       const user = req.body;
       const token = jwt.sign(user, process.env.ACCESS_TOKEN_SECRET, {
         expiresIn: "1h",
       });
       res.send({ token });
-    });
+    }); //* Users roots //
 
-    const verifyToken = (req, res, next) => {
-      // console.log('inside verify token', req.headers.authorization);
-      if (!req.headers.authorization) {
-        return res.status(401).send({ message: "unauthorized access" });
-      }
-      const token = req.headers.authorization.split(" ")[1];
-      jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, (err, decoded) => {
-        if (err) {
-          return res.status(401).send({ message: "unauthorized access" });
-        }
-        req.decoded = decoded;
-        next();
-      });
-    };
-    app.get("/", (req, res) => {
-      res.send("Hostel Harmony Server is running");
-    });
-    const verifyAdmin = async (req, res, next) => {
-      const email = req.decoded.email;
-      const query = { email: email };
-      const user = await userCollection.findOne(query);
-      const isAdmin = user?.role === "admin";
-      if (!isAdmin) {
-        return res.status(403).send({ message: "forbidden access" });
-      }
-      next();
-    };
-
-    //* Users
     app.get("/users", async (req, res) => {
       const { page = 1, limit = 10 } = req.query;
       const skip = (page - 1) * parseInt(limit);
@@ -199,29 +121,10 @@ async function run() {
       const query = { email: email };
       const user = await userCollection.findOne(query);
       res.send(user);
-    });
-    // Create text index for search
-    // const createIndexes = async () => {
-    //   try {
-    //     await mealCollection.createIndex({
-    //       title: "text",
-    //       description: "text",
-    //       category: "text",
-    //       ingredients: "text",
-    //       distributor_name: "text",
-    //     });
-    //     console.log("Text index created successfully");
-    //   } catch (error) {
-    //     console.error("Error creating index:", error);
-    //   }
-    // };
-    // createIndexes();
-
-    // User profile endpoints
+    }); // Create text index for search // const createIndexes = async () => { //   try { //     await mealCollection.createIndex({ //       title: "text", //       description: "text", //       category: "text", //       ingredients: "text", //       distributor_name: "text", //     }); //     console.log("Text index created successfully"); //   } catch (error) { //     console.error("Error creating index:", error); //   } // }; // createIndexes(); // User profile endpoints
     app.get("/users/profile/:email", verifyToken, async (req, res) => {
       try {
-        const email = req.params.email;
-        // Check authorization
+        const email = req.params.email; // Check authorization
         if (email !== req.decoded.email) {
           return res.status(403).send({ message: "Unauthorized access" });
         }
@@ -229,12 +132,10 @@ async function run() {
         const user = await userCollection.findOne({ email });
         if (!user) {
           return res.status(404).send({ message: "User not found" });
-        }
+        } // Get recent activity
 
-        // Get recent activity
-        const recentActivity = [];
+        const recentActivity = []; // Get recent meals
 
-        // Get recent meals
         const recentMeals = await mealCollection
           .find({ distributor_email: email })
           .sort({ createdAt: -1 })
@@ -259,9 +160,8 @@ async function run() {
             description: `Reviewed meal: ${review.text}`,
             timestamp: review.createdAt,
           });
-        });
+        }); // Sort activity by timestamp
 
-        // Sort activity by timestamp
         recentActivity.sort(
           (a, b) => new Date(b.timestamp) - new Date(a.timestamp)
         );
@@ -275,14 +175,12 @@ async function run() {
       } catch (error) {
         res.status(500).send({ error: error.message });
       }
-    });
+    }); // Get user's meals
 
-    // Get user's meals
     app.get("/meals/user/:email", verifyToken, async (req, res) => {
       try {
-        const email = req.params.email;
+        const email = req.params.email; // Check authorization
 
-        // Check authorization
         if (email !== req.decoded.email) {
           return res.status(403).send({ message: "Unauthorized access" });
         }
@@ -296,14 +194,12 @@ async function run() {
       } catch (error) {
         res.status(500).send({ error: error.message });
       }
-    });
+    }); // Get user's reviews
 
-    // Get user's reviews
     app.get("/reviews/user/:email", verifyToken, async (req, res) => {
       try {
-        const email = req.params.email;
+        const email = req.params.email; // Check authorization
 
-        // Check authorization
         if (email !== req.decoded.email) {
           return res.status(403).send({ message: "Unauthorized access" });
         }
@@ -317,14 +213,12 @@ async function run() {
       } catch (error) {
         res.status(500).send({ error: error.message });
       }
-    });
+    }); // Get user profile
 
-    // Get user profile
     app.get("/users/:email", verifyToken, async (req, res) => {
       try {
-        const email = req.params.email;
+        const email = req.params.email; // Verify user is requesting their own profile
 
-        // Verify user is requesting their own profile
         if (email !== req.decoded.email) {
           return res.status(403).send({ message: "Forbidden access" });
         }
@@ -338,9 +232,8 @@ async function run() {
       } catch (error) {
         res.status(500).send({ message: "Error fetching user profile" });
       }
-    });
+    }); // meal
 
-    // meal
     app.get("/meals", async (req, res) => {
       const {
         search = "",
@@ -351,23 +244,19 @@ async function run() {
         limit = 10,
       } = req.query;
 
-      const skip = (page - 1) * parseInt(limit);
+      const skip = (page - 1) * parseInt(limit); // Build query based on filters
 
-      // Build query based on filters
-      let query = {};
+      let query = {}; // Search filter
 
-      // Search filter
       if (search) {
         const searchRegex = new RegExp(search, "i");
         query.$or = [{ title: searchRegex }, { category: searchRegex }];
-      }
+      } // Category filter
 
-      // Category filter
       if (category) {
         query.category = new RegExp(category, "i");
-      }
+      } // Price range filter
 
-      // Price range filter
       query.price = {
         $gte: parseFloat(minPrice),
         $lte: parseFloat(maxPrice) || Number.MAX_SAFE_INTEGER,
@@ -415,15 +304,13 @@ async function run() {
 
         if (!meal) {
           return res.status(404).send({ message: "Meal not found" });
-        }
+        } // Get reviews for the meal
 
-        // Get reviews for the meal
         const reviews = await reviewCollection
           .find({ meal_id: id })
           .sort({ created_at: -1 })
-          .toArray();
+          .toArray(); // Check if user has liked the meal
 
-        // Check if user has liked the meal
         let liked = false;
         if (req.user) {
           const like = await likeCollection.findOne({
@@ -457,23 +344,20 @@ async function run() {
 
         if (existingLike) {
           return res.status(400).send({ message: "Meal already liked" });
-        }
-        // Add like
+        } // Add like
         await likeCollection.insertOne({
           meal_id,
           user_id,
           user_name: user.name,
           user_email: user.email,
           createdAt: new Date(),
-        });
+        }); // Update meal likes count
 
-        // Update meal likes count
         await mealCollection.updateOne(
           { _id: new ObjectId(meal_id) },
           { $inc: { likes: 1 } }
-        );
+        ); // Update request meal
 
-        // Update request meal
         await requestCollection.updateMany(
           { meal_id: meal_id },
           { $inc: { likes: 1 } }
@@ -509,9 +393,8 @@ async function run() {
           ...bodyData,
         };
 
-        await reviewCollection.insertOne(review);
+        await reviewCollection.insertOne(review); // Update meal rating
 
-        // Update meal rating
         const reviews = await reviewCollection.find({ meal_id }).toArray();
 
         const avgRating =
@@ -551,15 +434,13 @@ async function run() {
         const user = await userCollection.findOne({
           email: req?.decoded?.email,
         });
-        const user_id = user?._id;
-        // Check if user has an active subscription
+        const user_id = user?._id; // Check if user has an active subscription
         if (user?.subscription === "Bronze") {
           return res
             .status(400)
             .send({ message: "Active subscription required" });
-        }
+        } // Check if user already requested this meal
 
-        // Check if user already requested this meal
         const existingRequest = await requestCollection.findOne({
           meal_id,
           user_id,
@@ -582,8 +463,7 @@ async function run() {
       } catch (error) {
         res.status(500).send({ error: error.message });
       }
-    });
-    // Get requested meals for a user
+    }); // Get requested meals for a user
     app.get("/meal-requests", verifyToken, async (req, res) => {
       try {
         const email = req.decoded.email;
@@ -595,9 +475,8 @@ async function run() {
       } catch (error) {
         res.status(500).send({ message: error.message });
       }
-    });
+    }); // Delete a meal request
 
-    // Delete a meal request
     app.delete("/meal-requests/:id", verifyToken, async (req, res) => {
       try {
         const id = req.params.id;
@@ -691,9 +570,8 @@ async function run() {
         .find({ status: "approved" })
         .toArray();
       res.send(result);
-    });
+    }); // Get meals by category
 
-    // Get meals by category
     app.get("/meals/category/:category", async (req, res) => {
       try {
         const { category } = req.params;
@@ -704,14 +582,12 @@ async function run() {
           query.category = category;
         }
 
-        let meals = mealCollection.find(query);
+        let meals = mealCollection.find(query); // Apply limit if specified
 
-        // Apply limit if specified
         if (limit > 0) {
           meals = meals.limit(limit);
-        }
+        } // Sort by rating and likes
 
-        // Sort by rating and likes
         meals = meals.sort({ rating: -1, likes: -1 });
 
         const result = await meals.toArray();
@@ -720,16 +596,14 @@ async function run() {
         console.error("Error in meals by category:", error);
         res.status(500).send({ message: error.message });
       }
-    });
+    }); // Get all meal requests with search functionality
 
-    // Get all meal requests with search functionality
     app.get("/serve-meals", verifyToken, async (req, res) => {
       try {
         const search = req.query.search || "";
 
-        let query = {};
+        let query = {}; // Search filter
 
-        // Search filter
         if (search) {
           const searchRegex = new RegExp(search, "i");
           query.$or = [{ title: searchRegex }, { user_name: searchRegex }];
@@ -741,15 +615,13 @@ async function run() {
         console.error("Error in serve-meals:", error);
         res.status(500).send({ message: error.message });
       }
-    });
+    }); // Update meal request status to delivered
 
-    // Update meal request status to delivered
     app.patch("/serve-meals/:id", verifyToken, async (req, res) => {
       try {
         const id = req.params.id;
-        const { status } = req.body;
+        const { status } = req.body; // Verify if the request exists and is pending
 
-        // Verify if the request exists and is pending
         const request = await requestCollection.findOne({
           _id: new ObjectId(id),
           status: "pending",
@@ -780,8 +652,7 @@ async function run() {
         console.error("Error in serve-meal update:", error);
         res.status(500).send({ message: error.message });
       }
-    });
-    // payment intent
+    }); // payment intent
     app.post("/create-payment-intent", async (req, res) => {
       const { price } = req.body;
       const amount = parseInt(price * 100);
@@ -808,14 +679,12 @@ async function run() {
         );
       }
       res.send({ paymentResult });
-    });
+    }); // Get payment history for a user
 
-    // Get payment history for a user
     app.get("/payments/:email", verifyToken, async (req, res) => {
       try {
-        const { email } = req.params;
+        const { email } = req.params; // Verify user is requesting their own payments
 
-        // Verify user is requesting their own payments
         if (req.decoded.email !== email) {
           return res.status(403).send({ message: "Forbidden access" });
         }
@@ -829,9 +698,8 @@ async function run() {
         console.error("Error fetching payment history:", error);
         res.status(500).send({ message: error.message });
       }
-    });
+    }); // Upcoming Meals Routes
 
-    // Upcoming Meals Routes
     app.get("/upcoming-meals", async (req, res) => {
       try {
         const result = await upcomingMealsCollection
@@ -859,8 +727,7 @@ async function run() {
     app.post("/upcoming-meals/like/:id", verifyToken, async (req, res) => {
       try {
         const mealId = new ObjectId(req.params.id);
-        const userEmail = req.decoded.email;
-        // Check if user is premium
+        const userEmail = req.decoded.email; // Check if user is premium
         const user = await userCollection.findOne({ email: userEmail });
         const isPremium = ["silver", "gold", "platinum"].includes(
           user?.subscription
@@ -933,18 +800,15 @@ async function run() {
         try {
           const id = new ObjectId(req.params.id);
           const result = await upcomingMealsCollection.deleteOne({ _id: id });
-          res.send(result);
         } catch (error) {
           res.status(500).send("Error deleting upcoming meal");
         }
       }
-    );
+    ); // Review management routes
 
-    // Review management routes
     app.get("/reviews/:email", verifyToken, async (req, res) => {
       try {
-        const email = req.params.email;
-        // Verify user is requesting their own reviews
+        const email = req.params.email; // Verify user is requesting their own reviews
         if (email !== req.decoded.email) {
           return res.status(403).send({ message: "Forbidden access" });
         }
@@ -974,9 +838,8 @@ async function run() {
       try {
         const reviewId = new ObjectId(req.params.id);
         const { rating, review } = req.body;
-        console.log(req.body, "hello");
+        console.log(req.body, "hello"); // Verify user owns the review
 
-        // Verify user owns the review
         const existingReview = await reviewCollection.findOne({
           _id: reviewId,
         });
@@ -986,9 +849,8 @@ async function run() {
 
         if (existingReview.user_email !== req.decoded.email) {
           return res.status(403).send({ message: "Forbidden access" });
-        }
+        } // Update review
 
-        // Update review
         const result = await reviewCollection.updateOne(
           { _id: reviewId },
           {
@@ -997,9 +859,8 @@ async function run() {
               text: review,
             },
           }
-        );
+        ); // Update meal rating
 
-        // Update meal rating
         const mealId = existingReview.meal_id;
         const allReviews = await reviewCollection
           .find({ meal_id: mealId })
@@ -1026,9 +887,8 @@ async function run() {
 
     app.delete("/reviews/:id", verifyToken, async (req, res) => {
       try {
-        const reviewId = new ObjectId(req.params.id);
+        const reviewId = new ObjectId(req.params.id); // Verify user owns the review
 
-        // Verify user owns the review
         const existingReview = await reviewCollection.findOne({
           _id: reviewId,
         });
@@ -1038,12 +898,10 @@ async function run() {
 
         if (existingReview.user_email !== req.decoded.email) {
           return res.status(403).send({ message: "Forbidden access" });
-        }
+        } // Delete review
 
-        // Delete review
-        const result = await reviewCollection.deleteOne({ _id: reviewId });
+        const result = await reviewCollection.deleteOne({ _id: reviewId }); // Update meal rating
 
-        // Update meal rating
         const mealId = existingReview.meal_id;
         const remainingReviews = await reviewCollection
           .find({ meal_id: mealId })
@@ -1068,9 +926,8 @@ async function run() {
       } catch (error) {
         res.status(500).send({ message: "Error deleting review" });
       }
-    });
+    }); // Get admin stats
 
-    // Get admin stats
     app.get("/admin/stats", verifyToken, verifyAdmin, async (req, res) => {
       try {
         const [users, meals, reviews, payments] = await Promise.all([
@@ -1078,9 +935,8 @@ async function run() {
           mealCollection.countDocuments(),
           reviewCollection.countDocuments(),
           paymentCollection.find().toArray(),
-        ]);
+        ]); // Get meals added by this admin
 
-        // Get meals added by this admin
         const adminMeals = await mealCollection.countDocuments({
           distributor_email: req.decoded.email,
         });
@@ -1108,10 +964,7 @@ async function run() {
 }
 run().catch(console.dir);
 
-// app.listen(port, () => {
-//   console.log(`Server is running on port ${port}`);
-// });
-
+// HTTP সার্ভার শুরু
 httpServer.listen(port, () => {
   console.log(`Server is running on port ${port}`);
 });
